@@ -24,7 +24,35 @@ Differences between the two:
 
 Podman can also replace Docker transparently: `alias docker=podman`, or install the `podman-docker` package.
 
-## Create the software image
+## Get the image
+
+### Option 1: download the published image
+
+The image is built, tested and published automatically (see [Automatic builds](#automatic-builds)):
+
+```bash
+$ENGINE pull ghcr.io/transmisiones-centauro/direct_lio:latest
+```
+
+### Option 2: build it with the Dockerfile
+
+From the root of this repository:
+
+```bash
+$ENGINE build -f container/Dockerfile -t ghcr.io/transmisiones-centauro/direct_lio:latest .
+```
+
+The [Dockerfile](Dockerfile) starts from `docker.io/osrf/ros:jazzy-desktop-full`, installs the dependencies, and
+clones and builds the `feature/ros2` branch of the original DLIO repository in `/ros2_ws`. To build another
+repository or branch, add `--build-arg DLIO_REPO=<url>` or `--build-arg DLIO_BRANCH=<branch>`.
+
+Check that the image works by running the functional test (see [Automatic builds](#automatic-builds)):
+
+```bash
+$ENGINE run --rm ghcr.io/transmisiones-centauro/direct_lio:latest bash /test/run_test.sh
+```
+
+### Option 3: build it by hand
 
 Start a container from the official ROS 2 Jazzy image:
 
@@ -47,13 +75,19 @@ colcon build --symlink-install --packages-select direct_lidar_inertial_odometry
 exit
 ```
 
-Save the container as a new image and, optionally, publish it to the GitHub Container Registry.
-To push, you must log in first with a GitHub personal access token that has the `write:packages` scope:
+Save the container as a new image:
 
 ```bash
 $ENGINE commit direct_lio ghcr.io/transmisiones-centauro/direct_lio:latest
 $ENGINE rm direct_lio
+```
 
+### Publishing the image by hand
+
+To publish an image built with option 2 or 3, log in with a GitHub personal access token that has the
+`write:packages` scope:
+
+```bash
 $ENGINE login ghcr.io
 $ENGINE push ghcr.io/transmisiones-centauro/direct_lio:latest
 ```
@@ -182,3 +216,21 @@ ros2 service call /save_pcd direct_lidar_inertial_odometry/srv/SavePCD "{'leaf_s
 
 Test data (Ouster OS1-32 and OSDome rosbags) is linked from the
 [original README](https://github.com/vectr-ucla/direct_lidar_inertial_odometry/tree/feature/ros2#test-data).
+
+## Automatic builds
+
+The workflow [`.github/workflows/container.yml`](../.github/workflows/container.yml) runs on every push to this
+repository, and can also be started by hand from the *Actions* tab. It:
+
+1. Builds the image with `container/Dockerfile`.
+2. Runs the functional test, [`container/test/run_test.sh`](test/run_test.sh). The test launches DLIO and
+   [publishes synthetic data](test/synthetic_sensors.py) for 25 seconds: a static sensor in a box-shaped room,
+   with an IMU at 200 Hz and a point cloud at 10 Hz. It passes if DLIO publishes at least 50 odometry messages
+   and the estimated position stays within 0.5 m of the origin.
+3. Publishes the image to `ghcr.io/transmisiones-centauro/direct_lio`, only if the test passed, with these tags:
+   - the branch name (for example `master`), always pointing to the latest build of that branch;
+   - `sha-<commit>`, one per build;
+   - `latest`, only for builds of the default branch.
+
+For the workflow to publish, the `direct_lio` package must give this repository write access: in the package
+settings, under *Manage Actions access*, add the `direct_lio` repository with the *Write* role.
