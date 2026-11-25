@@ -91,8 +91,71 @@ Useful additional options:
 ## Use DLIO
 
 DLIO needs a `sensor_msgs/PointCloud2` topic and a 6-axis `sensor_msgs/Imu` topic. The LiDAR and the IMU must be
-time-synchronized. The extrinsic calibration between the robot base, the IMU and the LiDAR, and the IMU intrinsics,
-are set in `/ros2_ws/src/direct_lidar_inertial_odometry/cfg/dlio.yaml`.
+time-synchronized.
+
+### Parameters
+
+The launch file loads two configuration files from `/ros2_ws/src/direct_lidar_inertial_odometry/cfg/`.
+Because the package is built with `--symlink-install`, changes to these files take effect the next time DLIO is
+launched, without rebuilding.
+
+**Frames and clock (`cfg/params.yaml`)**
+
+```yaml
+    use_sim_time: true
+    frames/odom: odom
+    frames/baselink: base_link
+    frames/lidar: lidar
+    frames/imu: imu
+```
+
+- DLIO publishes the odometry and the TF `odom` → `base_link`. It also publishes `base_link` → `imu` and
+  `base_link` → `lidar`, built from the extrinsics in `dlio.yaml`.
+- Change the frame names to match your robot. If the robot already publishes the TF between its base and the
+  sensors (for example with `robot_state_publisher`), give DLIO different `lidar` and `imu` frame names, so that
+  the same frame doesn't get two parents in the TF tree.
+- The map node reads its frame from a different parameter, `odom/odom_frame` (default `odom`). If you change
+  `frames/odom`, add `odom/odom_frame` with the same value.
+- `use_sim_time: true` is correct for rosbags, played with `ros2 bag play --clock`. Set it to `false` when
+  running with live sensors.
+
+**Deskewing (`cfg/dlio.yaml`)**
+
+```yaml
+    pointcloud/deskew: true
+```
+
+- Deskewing corrects the motion distortion inside each scan. It needs a per-point timestamp field in the point
+  cloud: `t` (Ouster), `time` (Velodyne) or `timestamp` (Hesai, Livox).
+- If none of these fields is present, DLIO turns deskewing off by itself.
+- Set it to `false` if the point timestamps of your sensor are unreliable, or to compare results with and without it.
+
+**IMU and LiDAR position (`cfg/dlio.yaml`)**
+
+```yaml
+    extrinsics/baselink2imu/t: [ 0.006253, -0.011775, 0.007645 ]
+    extrinsics/baselink2imu/R: [ 1.,  0.,  0.,
+                                 0.,  1.,  0.,
+                                 0.,  0.,  1. ]
+    extrinsics/baselink2lidar/t: [ 0.,  0.,  0. ]
+    extrinsics/baselink2lidar/R: [ 1.,  0.,  0.,
+                                   0.,  1.,  0.,
+                                   0.,  0.,  1. ]
+```
+
+- `t` is the position of the IMU (or LiDAR) in the `base_link` frame, in meters. `R` is its rotation, written as
+  a 3×3 matrix row by row.
+- The default values are for the Ouster sensors used by the DLIO authors. Replace them with the values for your robot.
+- To use the LiDAR itself as `base_link`, leave `baselink2lidar` as the identity and set `baselink2imu` to the
+  position of the IMU relative to the LiDAR. For a LiDAR with an integrated IMU, the manufacturer's datasheet gives
+  this offset.
+- The published image uses `pointcloud/deskew: false` and `extrinsics/baselink2imu/t: [ 0.011, 0.02329, -0.04412 ]`,
+  the position of the integrated IMU of a Livox MID-360 relative to its LiDAR, with `base_link` at the LiDAR.
+- The IMU intrinsics (`imu/intrinsics/...`) can be left at their ideal default values, as long as
+  `imu/calibration: true`. Keep the sensor still for the first seconds, while DLIO calibrates the IMU biases
+  (`odom/imu/calibration/time` in `params.yaml`, 3 s by default).
+
+### Run
 
 Inside the container, source the workspace and launch DLIO with your topic names:
 
@@ -108,7 +171,7 @@ To process a rosbag, open a second shell in the same container from another term
 $ENGINE exec -it direct_lio bash
 # inside the container:
 source /ros2_ws/install/setup.bash
-ros2 bag play /rosbags/<rosbag>
+ros2 bag play --clock /rosbags/<rosbag>
 ```
 
 To save the generated map in `.pcd` format, call the following service:
